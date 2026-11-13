@@ -4,6 +4,8 @@ export interface ChatMessage {
   authorName: string;
   content: string;
   createdAt: string;
+  /** 服务端判定后写入的管理员标记，客户端只读。 */
+  authorIsAdmin: boolean;
 }
 
 export interface ChatMessageInput {
@@ -51,7 +53,9 @@ function isChatMessage(value: unknown): value is ChatMessage {
     typeof value.authorName === 'string' &&
     typeof value.content === 'string' &&
     typeof value.createdAt === 'string' &&
-    !Number.isNaN(Date.parse(value.createdAt))
+    !Number.isNaN(Date.parse(value.createdAt)) &&
+    (value.authorIsAdmin === undefined ||
+      typeof value.authorIsAdmin === 'boolean')
   );
 }
 
@@ -139,15 +143,20 @@ export async function fetchChatMessages(
   return payload.messages.filter(isChatMessage);
 }
 
+/** token 只用于让服务端判定发言者是否为管理员，消息内容本身不需要登录。 */
 export async function sendChatMessage(
   input: ChatMessageInput,
+  token?: string,
   signal?: AbortSignal,
 ): Promise<ChatMessage> {
   const payload = await requestChat(
     CHAT_ENDPOINT,
     {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify(input),
     },
     signal,

@@ -1,4 +1,4 @@
-import { handleStudyCloud } from './study-cloud.js';
+import { authenticate, handleStudyCloud } from './study-cloud.js';
 
 const MAX_BODY_BYTES = 4096;
 const MAX_AUTHOR_NAME_BYTES = 64;
@@ -96,6 +96,35 @@ function chatLimit(value) {
     : null;
 }
 
+// 管理员标记只能由服务端判定：客户端传来的 authorId 不可信，
+// 必须与当前登录 token 的账号一致，才按该账号的 is_admin 打标。
+async function chatAuthorIsAdmin(env, request, authorId) {
+  if (typeof authorId !== 'string' || !authorId) return false;
+  const header = request.headers.get('authorization') || '';
+  if (!header.toLowerCase().startsWith('bearer ')) return false;
+  try {
+    const auth = await authenticate(env, request);
+    return Boolean(auth && auth.isAdmin === true && auth.userId === authorId);
+  } catch {
+    return false;
+  }
+}
+
+// 老库上未必有这一列，用幂等 DDL 补齐，部署后即可用。
+let chatSchemaReady = false;
+
+async function ensureChatSchema(env) {
+  if (chatSchemaReady) return;
+  try {
+    await env.DB.prepare(
+      'ALTER TABLE chat_messages ADD COLUMN author_is_admin INTEGER NOT NULL DEFAULT 0',
+    ).run();
+  } catch {
+    // 列已存在，忽略。
+  }
+  chatSchemaReady = true;
+}
+
 function messageOf(row) {
   if (
     !isRecord(row) ||
@@ -114,15 +143,18 @@ function messageOf(row) {
     authorName: row.author_name,
     content: row.content,
     createdAt: row.created_at,
+    authorIsAdmin: Number(row.author_is_admin) === 1,
   };
 }
 
 async function listMessages(env, url) {
+  // 老库没有 author_is_admin 列时先补齐，否则 SELECT 会整条失败。
+  await ensureChatSchema(env);
   const limit = chatLimit(url.searchParams.get('limit'));
   if (limit === null) return json({ error: 'invalid_input' }, 400);
 
   const result = await env.DB.prepare(
-    'SELECT id, author_id, author_name, content, created_at FROM chat_messages ORDER BY created_at DESC LIMIT ?',
+    'SELECT id, author_id, author_name, content, created_at, author_is_admin FROM chat_messages ORDER BY created_at DESC LIMIT ?',
   )
     .bind(limit)
     .all();
@@ -165,6 +197,8 @@ async function createMessage(env, request) {
     return json({ error: 'invalid_input' }, 400);
   }
 
+  await ensureChatSchema(env);
+
   const last = await env.DB.prepare(
     'SELECT created_at FROM chat_messages WHERE author_id = ? ORDER BY created_at DESC LIMIT 1',
   )
@@ -178,15 +212,17 @@ async function createMessage(env, request) {
     return json({ error: 'chat_slow_down' }, 429);
   }
 
+  const authorIsAdmin = await chatAuthorIsAdmin(env, request, authorId);
   const message = {
     id: crypto.randomUUID(),
     authorId,
     authorName,
     content,
     createdAt: new Date().toISOString(),
+    authorIsAdmin,
   };
   await env.DB.prepare(
-    'INSERT INTO chat_messages (id, author_id, author_name, content, created_at) VALUES (?, ?, ?, ?, ?)',
+    'INSERT INTO chat_messages (id, author_id, author_name, content, created_at, author_is_admin) VALUES (?, ?, ?, ?, ?, ?)',
   )
     .bind(
       message.id,
@@ -194,6 +230,7 @@ async function createMessage(env, request) {
       message.authorName,
       message.content,
       message.createdAt,
+      authorIsAdmin ? 1 : 0,
     )
     .run();
   return json({ message }, 201);

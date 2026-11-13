@@ -287,7 +287,7 @@ async function createSession(env, userId, request) {
   return { token, expiresAt };
 }
 
-async function authenticate(env, request) {
+export async function authenticate(env, request) {
   const header = request.headers.get('authorization') || '';
   if (!header.toLowerCase().startsWith('bearer ')) return null;
   const token = header.slice(7).trim();

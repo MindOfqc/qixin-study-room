@@ -7,6 +7,7 @@ import {
   sendChatMessage,
   type ChatMessage,
 } from '#/api/chat';
+import { readCloudSession } from '#/api/study-cloud';
 import IconifyIcon from '#/components/IconifyIcon.vue';
 
 const props = defineProps<{
@@ -153,11 +154,15 @@ async function sendMessage(): Promise<void> {
   sending.value = true;
   error.value = '';
   try {
-    const message = await sendChatMessage({
-      authorId: props.authorId,
-      authorName: props.authorName,
-      content,
-    });
+    const message = await sendChatMessage(
+      {
+        authorId: props.authorId,
+        authorName: props.authorName,
+        content,
+      },
+      // 登录 token 只用来让服务端认出发言者是不是管理员，没登录也能发言。
+      readCloudSession()?.token,
+    );
     if (disposed) return;
     lastSentAt = Date.now();
     mergeMessages([message]);
@@ -353,6 +358,17 @@ onBeforeUnmount(() => {
                     <strong>{{
                       message.authorId === authorId ? '我' : message.authorName
                     }}</strong>
+                    <span
+                      v-if="message.authorIsAdmin"
+                      class="chat-admin-tag"
+                      title="管理员"
+                    >
+                      <IconifyIcon
+                        icon="lucide:shield-check"
+                        class="chat-admin-icon"
+                      />
+                      管理员
+                    </span>
                     <time :datetime="message.createdAt">{{
                       formatTime(message.createdAt)
                     }}</time>
@@ -684,6 +700,43 @@ onBeforeUnmount(() => {
 .chat-meta time {
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
+}
+
+/* 管理员身份：服务端按账号 is_admin 打标，前端只负责凸显。 */
+.chat-admin-tag {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border: 1px solid color-mix(
+    in srgb,
+    var(--study-room-primary, #d7ef83) 55%,
+    transparent
+  );
+  border-radius: 999px;
+  color: var(--study-room-primary, #d7ef83);
+  background: color-mix(
+    in srgb,
+    var(--study-room-primary, #d7ef83) 16%,
+    transparent
+  );
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.chat-admin-icon {
+  width: 10px;
+  height: 10px;
+}
+
+.chat-row.mine .chat-admin-tag {
+  border-color: rgb(5 22 18 / 0.45);
+  color: #051612;
+  background: rgb(5 22 18 / 0.14);
 }
 
 .chat-bubble {
