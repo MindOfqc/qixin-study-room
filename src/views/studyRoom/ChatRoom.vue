@@ -364,30 +364,42 @@ onBeforeUnmount(() => {
                 :class="{ mine: message.authorId === authorId }"
               >
                 <span
-                  v-if="messageAvatar(message)"
-                  class="chat-avatar"
-                  aria-hidden="true"
+                  class="chat-avatar-wrap"
+                  :class="{ admin: message.authorIsAdmin }"
                 >
-                  <img
-                    :src="messageAvatar(message)"
-                    alt=""
-                    class="chat-avatar-img"
-                    referrerpolicy="no-referrer"
-                  />
-                </span>
-                <span
-                  v-else
-                  class="chat-avatar"
-                  :style="{ background: avatarColor(message.authorName) }"
-                  aria-hidden="true"
-                >
-                  {{ initials(message.authorName) }}
+                  <span
+                    v-if="messageAvatar(message)"
+                    class="chat-avatar"
+                    aria-hidden="true"
+                  >
+                    <img
+                      :src="messageAvatar(message)"
+                      alt=""
+                      class="chat-avatar-img"
+                      referrerpolicy="no-referrer"
+                    />
+                  </span>
+                  <span
+                    v-else
+                    class="chat-avatar"
+                    :style="{ background: avatarColor(message.authorName) }"
+                    aria-hidden="true"
+                  >
+                    {{ initials(message.authorName) }}
+                  </span>
+                  <span
+                    v-if="message.authorIsAdmin"
+                    class="chat-avatar-mark"
+                    aria-hidden="true"
+                  >
+                    <IconifyIcon
+                      icon="lucide:shield-check"
+                      class="chat-avatar-mark-icon"
+                    />
+                  </span>
                 </span>
                 <div class="chat-body">
                   <div class="chat-meta">
-                    <strong>{{
-                      message.authorId === authorId ? '我' : message.authorName
-                    }}</strong>
                     <span
                       v-if="message.authorIsAdmin"
                       class="chat-admin-tag"
@@ -399,6 +411,9 @@ onBeforeUnmount(() => {
                       />
                       管理员
                     </span>
+                    <strong>{{
+                      message.authorId === authorId ? '我' : message.authorName
+                    }}</strong>
                     <time :datetime="message.createdAt">{{
                       formatTime(message.createdAt)
                     }}</time>
@@ -676,11 +691,17 @@ onBeforeUnmount(() => {
   flex-direction: row-reverse;
 }
 
-.chat-avatar {
-  display: grid;
+.chat-avatar-wrap {
+  position: relative;
   width: 28px;
   height: 28px;
   flex-shrink: 0;
+}
+
+.chat-avatar {
+  display: grid;
+  width: 100%;
+  height: 100%;
   place-items: center;
   border-radius: 50%;
   color: #051612;
@@ -689,6 +710,66 @@ onBeforeUnmount(() => {
   line-height: 1;
   user-select: none;
   overflow: hidden;
+}
+
+/* 管理员头像：慢转的三色环加角标，动效只留在这一小块。 */
+.chat-avatar-wrap.admin {
+  width: 32px;
+  height: 32px;
+  margin-top: -2px;
+  filter: drop-shadow(
+    0 0 6px color-mix(in srgb, var(--study-room-primary, #d7ef83) 45%, transparent)
+  );
+}
+
+.chat-avatar-wrap.admin::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    var(--study-room-primary, #d7ef83),
+    #ffd39b 28%,
+    #67e2d1 55%,
+    var(--study-room-primary, #d7ef83) 80%,
+    #ffd39b
+  );
+  animation: chat-admin-ring 10s linear infinite;
+}
+
+.chat-avatar-wrap.admin .chat-avatar {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  margin: 3px;
+  border: 1px solid rgb(5 22 18 / 0.6);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.14);
+}
+
+.chat-avatar-mark {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  z-index: 1;
+  display: grid;
+  width: 14px;
+  height: 14px;
+  place-items: center;
+  border: 1px solid rgb(5 22 18 / 0.7);
+  border-radius: 50%;
+  color: #06170f;
+  background: linear-gradient(
+    140deg,
+    var(--study-room-primary, #d7ef83),
+    #ffd39b
+  );
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.45);
+}
+
+.chat-avatar-mark-icon {
+  width: 9px;
+  height: 9px;
 }
 
 .chat-avatar-img {
@@ -734,28 +815,49 @@ onBeforeUnmount(() => {
 
 /* 管理员身份：服务端按账号 is_admin 打标，前端只负责凸显。 */
 .chat-admin-tag {
+  position: relative;
+  isolation: isolate;
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
   gap: 3px;
-  padding: 1px 6px;
-  border: 1px solid color-mix(
-    in srgb,
-    var(--study-room-primary, #d7ef83) 55%,
-    transparent
-  );
+  overflow: hidden;
+  padding: 2px 8px;
+  border: 1px solid
+    color-mix(in srgb, var(--study-room-primary, #d7ef83) 75%, #fff);
   border-radius: 999px;
-  color: var(--study-room-primary, #d7ef83);
-  background: color-mix(
-    in srgb,
-    var(--study-room-primary, #d7ef83) 16%,
-    transparent
+  color: #06170f;
+  background: linear-gradient(
+    115deg,
+    var(--study-room-primary, #d7ef83),
+    #ffe6a8 48%,
+    var(--study-room-primary, #d7ef83)
   );
+  box-shadow:
+    0 0 0 1px rgb(5 22 18 / 0.35),
+    0 0 8px color-mix(in srgb, var(--study-room-primary, #d7ef83) 45%, transparent);
   font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  line-height: 1.6;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  line-height: 1.5;
   white-space: nowrap;
+  animation: chat-admin-glow 4.8s ease-in-out infinite;
+}
+
+/* 周期性高光扫过：z-index -1 让它压在文字下面、底色上面。 */
+.chat-admin-tag::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(
+    105deg,
+    transparent 38%,
+    rgb(255 255 255 / 0.85) 50%,
+    transparent 62%
+  );
+  transform: translateX(-130%);
+  animation: chat-admin-sheen 4.2s ease-in-out infinite;
 }
 
 .chat-admin-icon {
@@ -763,10 +865,50 @@ onBeforeUnmount(() => {
   height: 10px;
 }
 
-.chat-row.mine .chat-admin-tag {
-  border-color: rgb(5 22 18 / 0.45);
-  color: #051612;
-  background: rgb(5 22 18 / 0.14);
+@keyframes chat-admin-glow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px rgb(5 22 18 / 0.35),
+      0 0 6px
+        color-mix(in srgb, var(--study-room-primary, #d7ef83) 32%, transparent);
+  }
+
+  50% {
+    box-shadow:
+      0 0 0 1px rgb(5 22 18 / 0.35),
+      0 0 12px
+        color-mix(in srgb, var(--study-room-primary, #d7ef83) 62%, transparent);
+  }
+}
+
+@keyframes chat-admin-sheen {
+  0%,
+  55% {
+    transform: translateX(-130%);
+  }
+
+  85%,
+  100% {
+    transform: translateX(130%);
+  }
+}
+
+@keyframes chat-admin-ring {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-admin-tag,
+  .chat-avatar-wrap.admin::before {
+    animation: none;
+  }
+
+  .chat-admin-tag::after {
+    display: none;
+  }
 }
 
 .chat-bubble {
