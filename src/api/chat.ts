@@ -12,6 +12,14 @@ export interface ChatMessageInput {
   authorId: string;
   authorName: string;
   content: string;
+  /** 发送方当前的自定义头像（压缩后的 data URL），服务端按作者存一份。 */
+  authorAvatar?: string;
+}
+
+export interface ChatRoomSnapshot {
+  messages: ChatMessage[];
+  /** authorId → 头像 data URL，列表里按作者去重返回。 */
+  authors: Record<string, string>;
 }
 
 export type ChatErrorCode =
@@ -127,10 +135,24 @@ async function requestChat(
   return payload;
 }
 
+function isAuthorAvatars(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {};
+  const authors: Record<string, string> = {};
+  for (const [authorId, avatar] of Object.entries(value)) {
+    if (
+      typeof avatar === 'string' &&
+      /^data:image\/(png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+$/i.test(avatar)
+    ) {
+      authors[authorId] = avatar;
+    }
+  }
+  return authors;
+}
+
 export async function fetchChatMessages(
   limit = DEFAULT_LIMIT,
   signal?: AbortSignal,
-): Promise<ChatMessage[]> {
+): Promise<ChatRoomSnapshot> {
   const safeLimit = Math.min(200, Math.max(1, Math.trunc(limit)));
   const payload = await requestChat(
     `${CHAT_ENDPOINT}?limit=${safeLimit}`,
@@ -140,7 +162,10 @@ export async function fetchChatMessages(
   if (!isRecord(payload) || !Array.isArray(payload.messages)) {
     throw new ChatApiError('invalid_response', 200);
   }
-  return payload.messages.filter(isChatMessage);
+  return {
+    messages: payload.messages.filter(isChatMessage),
+    authors: isAuthorAvatars(payload.authors),
+  };
 }
 
 /** token 只用于让服务端判定发言者是否为管理员，消息内容本身不需要登录。 */

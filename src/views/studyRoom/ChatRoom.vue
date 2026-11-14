@@ -8,6 +8,7 @@ import {
   type ChatMessage,
 } from '#/api/chat';
 import { readCloudSession } from '#/api/study-cloud';
+import { shrinkAvatarDataUrl } from '#/lib/local-user';
 import IconifyIcon from '#/components/IconifyIcon.vue';
 
 const props = defineProps<{
@@ -31,6 +32,7 @@ const AVATAR_COLORS = [
 
 const open = ref(false);
 const messages = ref<ChatMessage[]>([]);
+const authors = ref<Record<string, string>>({});
 const draft = ref('');
 const loading = ref(false);
 const sending = ref(false);
@@ -63,6 +65,30 @@ function avatarColor(name: string): string {
     hash = (hash * 31 + (char.codePointAt(0) ?? 0)) >>> 0;
   }
   return AVATAR_COLORS[hash % AVATAR_COLORS.length] ?? AVATAR_COLORS[0]!;
+}
+
+/** 消息头像：优先服务端存的作者头像，其次自己的当前头像。 */
+function messageAvatar(message: ChatMessage): string {
+  const stored = authors.value[message.authorId];
+  if (stored) return stored;
+  return message.authorId === props.authorId ? props.authorAvatar || '' : '';
+}
+
+let chatAvatarSource = '';
+let chatAvatarCache = '';
+
+/** 发言时带上的轻量头像；压不动就退回原图，实在太大就不带。 */
+async function chatAvatar(): Promise<string> {
+  const source = props.authorAvatar || '';
+  if (!source.startsWith('data:image/')) return '';
+  if (chatAvatarSource === source && chatAvatarCache) return chatAvatarCache;
+  chatAvatarSource = source;
+  try {
+    chatAvatarCache = await shrinkAvatarDataUrl(source);
+  } catch {
+    chatAvatarCache = source.length <= 20480 ? source : '';
+  }
+  return chatAvatarCache;
 }
 
 function formatTime(value: string): string {
@@ -126,10 +152,11 @@ async function loadMessages(initial = false): Promise<void> {
   const token = ++requestToken;
   if (initial) loading.value = true;
   try {
-    const incoming = await fetchChatMessages(100);
+    const snapshot = await fetchChatMessages(100);
     if (disposed || token !== requestToken) return;
     const nearBottom = isNearBottom();
-    mergeMessages(incoming);
+    mergeMessages(snapshot.messages);
+    authors.value = snapshot.authors;
     error.value = '';
     if (initial || nearBottom) scrollToBottom();
   } catch (caught) {
@@ -154,17 +181,20 @@ async function sendMessage(): Promise<void> {
   sending.value = true;
   error.value = '';
   try {
+    const avatar = await chatAvatar();
     const message = await sendChatMessage(
       {
         authorId: props.authorId,
         authorName: props.authorName,
         content,
+        ...(avatar ? { authorAvatar: avatar } : {}),
       },
       // 登录 token 只用来让服务端认出发言者是不是管理员，没登录也能发言。
       readCloudSession()?.token,
     );
     if (disposed) return;
     lastSentAt = Date.now();
+    if (avatar) authors.value = { ...authors.value, [message.authorId]: avatar };
     mergeMessages([message]);
     draft.value = '';
     scrollToBottom();
@@ -334,12 +364,12 @@ onBeforeUnmount(() => {
                 :class="{ mine: message.authorId === authorId }"
               >
                 <span
-                  v-if="message.authorId === authorId && authorAvatar"
+                  v-if="messageAvatar(message)"
                   class="chat-avatar"
                   aria-hidden="true"
                 >
                   <img
-                    :src="authorAvatar"
+                    :src="messageAvatar(message)"
                     alt=""
                     class="chat-avatar-img"
                     referrerpolicy="no-referrer"

@@ -100,6 +100,32 @@ async function loadImageSource(
   }
 }
 
+/** 对话室用的轻量头像：把资料头像再压一遍，避免每条消息都拖一个 20KB base64。 */
+export async function shrinkAvatarDataUrl(
+  value: string,
+  size = 128,
+): Promise<string> {
+  const image = new Image();
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve();
+    image.onerror = () => reject(new Error('无法读取头像'));
+    image.src = value;
+  });
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('无法处理头像');
+  const scale = Math.max(
+    size / (image.naturalWidth || size),
+    size / (image.naturalHeight || size),
+  );
+  const width = (image.naturalWidth || size) * scale;
+  const height = (image.naturalHeight || size) * scale;
+  ctx.drawImage(image, (size - width) / 2, (size - height) / 2, width, height);
+  return canvas.toDataURL('image/jpeg', 0.8);
+}
+
 export async function fileToAvatarDataUrl(file: File): Promise<string> {
   const source = await loadImageSource(file);
   const sourceWidth =

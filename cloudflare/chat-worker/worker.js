@@ -1,7 +1,9 @@
 import { authenticate, handleStudyCloud } from './study-cloud.js';
 
-const MAX_BODY_BYTES = 4096;
+const MAX_BODY_BYTES = 24576;
 const MAX_AUTHOR_NAME_BYTES = 64;
+const MAX_AVATAR_CHARS = 20480;
+const AVATAR_DATA_URL = /^data:image\/(png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+$/i;
 const MAX_CONTENT_CHARS = 500;
 const MAX_CONTENT_BYTES = 4000;
 const DEFAULT_LIMIT = 100;
@@ -96,6 +98,15 @@ function chatLimit(value) {
     : null;
 }
 
+// 头像只收小尺寸 data URL：前端按作者压到 128px，这里再兜一层上限。
+function validAuthorAvatar(value) {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  if (trimmed.length > MAX_AVATAR_CHARS) return null;
+  return AVATAR_DATA_URL.test(trimmed) ? trimmed : null;
+}
+
 // 管理员标记只能由服务端判定：客户端传来的 authorId 不可信，
 // 必须与当前登录 token 的账号一致，才按该账号的 is_admin 打标。
 async function chatAuthorIsAdmin(env, request, authorId) {
@@ -110,7 +121,7 @@ async function chatAuthorIsAdmin(env, request, authorId) {
   }
 }
 
-// 老库上未必有这一列，用幂等 DDL 补齐，部署后即可用。
+// 老库上未必有这些结构，用幂等 DDL 补齐，部署后即可用。
 let chatSchemaReady = false;
 
 async function ensureChatSchema(env) {
@@ -121,6 +132,14 @@ async function ensureChatSchema(env) {
     ).run();
   } catch {
     // 列已存在，忽略。
+  }
+  // 头像按作者存一份，避免每条消息都塞一个 base64。
+  try {
+    await env.DB.prepare(
+      'CREATE TABLE IF NOT EXISTS chat_authors (author_id TEXT PRIMARY KEY, avatar TEXT NOT NULL, updated_at TEXT NOT NULL)',
+    ).run();
+  } catch {
+    // 建表失败时对话室照常工作，只是不显示自定义头像。
   }
   chatSchemaReady = true;
 }
@@ -147,6 +166,30 @@ function messageOf(row) {
   };
 }
 
+// 头像按作者去重返回，消息本体保持轻量。查不到就当作没头像，不影响对话室。
+async function authorAvatarMap(env, messages) {
+  const ids = [...new Set(messages.map((message) => message.authorId))];
+  if (!ids.length) return {};
+  try {
+    const result = await env.DB.prepare(
+      `SELECT author_id, avatar FROM chat_authors WHERE author_id IN (${ids
+        .map(() => '?')
+        .join(',')})`,
+    )
+      .bind(...ids)
+      .all();
+    const authors = {};
+    for (const row of Array.isArray(result.results) ? result.results : []) {
+      if (!isRecord(row) || typeof row.author_id !== 'string') continue;
+      const avatar = validAuthorAvatar(row.avatar);
+      if (avatar) authors[row.author_id] = avatar;
+    }
+    return authors;
+  } catch {
+    return {};
+  }
+}
+
 async function listMessages(env, url) {
   // 老库没有 author_is_admin 列时先补齐，否则 SELECT 会整条失败。
   await ensureChatSchema(env);
@@ -163,7 +206,8 @@ async function listMessages(env, url) {
     .map(messageOf)
     .filter((message) => message !== null)
     .reverse();
-  return json({ messages, now: new Date().toISOString() });
+  const authors = await authorAvatarMap(env, messages);
+  return json({ messages, authors, now: new Date().toISOString() });
 }
 
 async function createMessage(env, request) {
@@ -193,9 +237,11 @@ async function createMessage(env, request) {
   const authorId = validAuthorId(input.authorId);
   const authorName = validAuthorName(input.authorName);
   const content = validContent(input.content);
+  const authorAvatar = validAuthorAvatar(input.authorAvatar);
   if (!authorId || !authorName || !content) {
     return json({ error: 'invalid_input' }, 400);
   }
+  if (authorAvatar === null) return json({ error: 'invalid_input' }, 400);
 
   await ensureChatSchema(env);
 
@@ -233,6 +279,18 @@ async function createMessage(env, request) {
       authorIsAdmin ? 1 : 0,
     )
     .run();
+  if (authorAvatar) {
+    try {
+      await env.DB.prepare(
+        `INSERT INTO chat_authors (author_id, avatar, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(author_id) DO UPDATE SET avatar = excluded.avatar, updated_at = excluded.updated_at`,
+      )
+        .bind(authorId, authorAvatar, message.createdAt)
+        .run();
+    } catch {
+      // 头像存不下不影响消息本身。
+    }
+  }
   return json({ message }, 201);
 }
 
